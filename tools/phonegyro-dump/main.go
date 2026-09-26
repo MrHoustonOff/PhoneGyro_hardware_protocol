@@ -89,6 +89,31 @@ func printFrame(f []byte) {
 		seq, ts, accel[0], accel[1], accel[2], gyro[0], gyro[1], gyro[2], temp, buttons)
 }
 
+func status(ok bool) string {
+	if ok {
+		return "OK"
+	}
+	return "FAIL"
+}
+
+// checklistLine is the tool's pseudo-feedback: a one-line pass/fail readout
+// against the protocol's own Level 5 requirements (frames present, minimum
+// 100Hz rate, metadata declared, no dropped frames), refreshed every report
+// interval so a device author gets an immediate verdict instead of having to
+// read raw numbers themselves.
+func checklistLine(hz float64, totalFrames int, metaSeen bool, dropped uint64, totalGarbage int) string {
+	metaStatus := "OK"
+	if !metaSeen {
+		metaStatus = "MISSING (defaults applied)"
+	}
+	lossStatus := "OK"
+	if dropped > 0 {
+		lossStatus = fmt.Sprintf("WARN (%d dropped)", dropped)
+	}
+	return fmt.Sprintf("[CHECK] frames=%s  rate=%s (%.0f Hz)  metadata=%s  loss=%s  garbage(total)=%d bytes",
+		status(totalFrames > 0), status(hz >= 95), hz, metaStatus, lossStatus, totalGarbage)
+}
+
 func listPorts() {
 	ports, _ := serial.GetPortsList()
 	if len(ports) == 0 {
@@ -134,6 +159,10 @@ func main() {
 
 	var dec decoder
 	var totalFrames, totalGarbage int
+	var dropped uint64
+	var haveSeq bool
+	var lastSeq byte
+	var metaSeen bool
 	framesSinceReport := 0
 	start := time.Now()
 	lastReport := start
@@ -167,8 +196,21 @@ func main() {
 						printFrame(f)
 						lastMeta = append([]byte(nil), f...)
 					}
+					metaSeen = true
 					continue
 				}
+				seq := f[3]
+				if haveSeq {
+					gap := int(seq) - int(lastSeq)
+					if gap < 0 {
+						gap += 256
+					}
+					if gap > 1 {
+						dropped += uint64(gap - 1)
+					}
+				}
+				lastSeq, haveSeq = seq, true
+
 				if time.Since(lastPrint) >= 200*time.Millisecond {
 					printFrame(f)
 					lastPrint = time.Now()
@@ -177,8 +219,7 @@ func main() {
 		}
 		if time.Since(lastReport) >= 2*time.Second {
 			hz := float64(framesSinceReport) / time.Since(lastReport).Seconds()
-			fmt.Printf("--- %.0f frames/sec, %d total valid frames, %d garbage bytes discarded ---\n",
-				hz, totalFrames, totalGarbage)
+			fmt.Println(checklistLine(hz, totalFrames, metaSeen, dropped, totalGarbage))
 			framesSinceReport = 0
 			lastReport = time.Now()
 		}
@@ -188,6 +229,7 @@ func main() {
 	fmt.Println()
 	fmt.Printf("summary: %d valid frames in %.1fs (%.0f/s avg), %d garbage bytes discarded\n",
 		totalFrames, elapsed, float64(totalFrames)/elapsed, totalGarbage)
+	fmt.Println(checklistLine(float64(totalFrames)/elapsed, totalFrames, metaSeen, dropped, totalGarbage))
 	if totalFrames == 0 {
 		fmt.Println("no valid PhoneGyro frames seen at all -- check baud rate (must be 115200),")
 		fmt.Println("wiring, and that the sketch actually uploaded successfully.")
