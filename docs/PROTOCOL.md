@@ -223,10 +223,11 @@ application.
 
 ---
 
-## 9. Conformance tooling (planned)
+## 9. Conformance tooling
 
-A small standalone CLI tool (`phonegyro-conform <port>`) is planned for this
-repository: it opens a serial port, reads N frames, and reports pass/fail for
-each contract level (valid MAGIC/CRC8, stable frame rate, sane SEQ
-progression, presence of a metadata frame) — so a third-party firmware author
-can validate their device without installing the full host application.
+`tools/phonegyro-dump` in this repository decodes and pretty-prints a live
+frame stream plus link-quality stats (frames/sec, garbage bytes discarded),
+verified against the reference firmware on real hardware. A stricter
+pass/fail conformance report per contract level is still a possible future
+addition; the dump tool already covers the practical need of validating a
+device without installing the full host application.
