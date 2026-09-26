@@ -4,6 +4,7 @@
 //
 // Implements protocol v1.0 (see ../../docs/PROTOCOL.md):
 //   - one metadata frame (TYPE=0x00) sent once at startup
+//   - one optional device name frame (TYPE=0x02) sent once at startup
 //   - a continuous stream of data frames (TYPE=0x01) at 200 Hz
 //   - 24-byte fixed frame, little-endian, CRC-8/SMBUS trailer
 //   - raw register values only -- no on-device sensor fusion
@@ -13,6 +14,7 @@
 // without chasing a dependency. Wire is the only requirement.
 
 #include <Wire.h>
+#include <string.h>
 
 // ---- MPU-6050 registers ----------------------------------------------
 static const uint8_t MPU_ADDR         = 0x68; // AD0 tied to GND
@@ -28,7 +30,15 @@ static const uint8_t  FRAME_MAGIC0 = 0xAA;
 static const uint8_t  FRAME_MAGIC1 = 0x55;
 static const uint8_t  TYPE_META    = 0x00;
 static const uint8_t  TYPE_DATA    = 0x01;
+static const uint8_t  TYPE_NAME    = 0x02; // optional device name frame (see docs/PROTOCOL.md)
 static const uint8_t  FRAME_SIZE   = 24;
+static const uint8_t  NAME_FIELD_BYTES = 19; // bytes 4..22 of the frame
+
+// Optional (Level 3): human-readable identification for this exact board +
+// sensor combo. A device is fully compliant without ever sending this --
+// change or remove it freely, it's cosmetic, never parsed as anything but
+// a display label.
+static const char DEVICE_NAME[] = "Nano MPU-6050";
 
 static const uint16_t SAMPLE_RATE_HZ  = 200;
 static const uint16_t GYRO_RANGE_DPS  = 250;  // matches GYRO_CONFIG FS_SEL=0 below
@@ -94,6 +104,26 @@ void sendMetadataFrame() {
   sendFrame(f);
 }
 
+// sendDeviceNameFrame builds the optional TYPE=0x02 frame directly as raw
+// bytes rather than via PhoneGyroFrame, since its payload (bytes 4..22) is
+// an ASCII string, not the typed accel/gyro/temp fields the struct names
+// imply for TYPE=0x00/0x01.
+void sendDeviceNameFrame() {
+  uint8_t buf[FRAME_SIZE];
+  memset(buf, 0, sizeof(buf));
+  buf[0] = FRAME_MAGIC0;
+  buf[1] = FRAME_MAGIC1;
+  buf[2] = TYPE_NAME;
+  buf[3] = 0; // SEQ
+
+  uint8_t nameLen = (uint8_t)strlen(DEVICE_NAME);
+  if (nameLen > NAME_FIELD_BYTES) nameLen = NAME_FIELD_BYTES;
+  memcpy(buf + 4, DEVICE_NAME, nameLen); // remaining name bytes stay zero-padded
+
+  buf[FRAME_SIZE - 1] = crc8(buf, FRAME_SIZE - 1);
+  Serial.write(buf, FRAME_SIZE);
+}
+
 void mpuWrite(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(reg);
@@ -146,8 +176,10 @@ void setup() {
   setupMPU6050();
 
   // Level 1: start sending immediately, no handshake. First frame out is
-  // the mandatory metadata frame (Level 3), then the data stream begins.
+  // the mandatory metadata frame (Level 3), then the optional device name
+  // frame, then the data stream begins.
   sendMetadataFrame();
+  sendDeviceNameFrame();
   nextFrameAt = micros();
 }
 

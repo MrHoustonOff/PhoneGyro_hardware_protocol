@@ -119,6 +119,32 @@ the stream, it **must** fall back to safe defaults matching the most common
 cheap 6-axis sensor on the market (±250 °/s gyro range, ±2 g accel range,
 200 Hz) and must not treat this as an error.
 
+### Optional: device name frame (`TYPE=0x02`)
+
+A device **may** additionally identify itself by name — e.g. "Nano MPU-6050",
+a custom board's product name, or anything else short and human-readable.
+This is entirely optional: a device that never sends it is fully compliant,
+and the host must fall back to a generic label. Nothing about Levels 1–5
+requires it.
+
+The frame reuses the same 24-byte layout, bytes 4–22 repurposed as an ASCII
+string:
+
+```
+MAGIC    = 0xAA 0x55  (as always)
+TYPE     = 0x02
+SEQ      = 0
+BYTES 4..22 (19 bytes) = device name, ASCII, zero-padded
+                         (host reads up to the first 0x00, or all 19 bytes
+                         if none)
+CRC8     = as always, over bytes 0-22
+```
+
+If sent, it should be sent once, right after the metadata frame and before
+the `TYPE=0x01` data stream — the same "send it once at startup" rule as
+metadata. A host that never receives one must not treat that as an error;
+it should just display something generic (e.g. "USB controller").
+
 ---
 
 ## 4. Level 4 — Auto-discovery
@@ -212,7 +238,8 @@ breaking existing implementations:
 
 - `0x00` — metadata frame (Level 3).
 - `0x01` — current version, raw accelerometer/gyroscope data (described above).
-- Future values (`0x02`, `0x03`, ...) may introduce a different payload
+- `0x02` — optional device name frame (Level 3).
+- Future values (`0x03`, ...) may introduce a different payload
   (e.g. a device-computed orientation quaternion, for MCUs powerful enough
   to run their own fusion filter) while keeping the same
   MAGIC/TYPE/SEQ/CRC8 skeleton.

@@ -31,6 +31,7 @@ const (
 	magic1    = 0x55
 	typeMeta  = 0x00
 	typeData  = 0x01
+	typeName  = 0x02
 	baudRate  = 115200
 )
 
@@ -86,6 +87,25 @@ func (d *decoder) push(data []byte) (frames [][]byte, garbage int) {
 func le16(b []byte) int16  { return int16(uint16(b[0]) | uint16(b[1])<<8) }
 func le32(b []byte) uint32 { return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24 }
 
+// deviceName extracts the optional TYPE=0x02 frame's ASCII name from bytes
+// 4..22, trimmed at the first 0x00 (or all 19 bytes if there is none).
+func deviceName(f []byte) string {
+	b := f[4:23]
+	if i := indexByte(b, 0); i >= 0 {
+		b = b[:i]
+	}
+	return string(b)
+}
+
+func indexByte(b []byte, target byte) int {
+	for i, c := range b {
+		if c == target {
+			return i
+		}
+	}
+	return -1
+}
+
 func printFrame(f []byte) {
 	typ, seq, ts := f[2], f[3], le32(f[4:8])
 	accel := [3]int16{le16(f[8:10]), le16(f[10:12]), le16(f[12:14])}
@@ -95,6 +115,10 @@ func printFrame(f []byte) {
 	if typ == typeMeta {
 		fmt.Printf("[META]  protocol=%d.%d.%d  accelRange=%dg  gyroRange=%d deg/s  rate=%dHz  caps=0x%02X\n",
 			ts>>16, (ts>>8)&0xFF, ts&0xFF, accel[0], accel[1], accel[2], buttons)
+		return
+	}
+	if typ == typeName {
+		fmt.Printf("[NAME]  device=%q\n", deviceName(f))
 		return
 	}
 	fmt.Printf("[DATA]  seq=%3d  ts_us=%10d  accel=(%6d,%6d,%6d)  gyro=(%6d,%6d,%6d)  temp=%5d  buttons=0x%02X\n",
@@ -240,6 +264,7 @@ func main() {
 	lastReport := start
 	lastPrint := time.Time{}
 	var lastMeta []byte
+	var lastName []byte
 
 	handle := func(f []byte) {
 		totalFrames++
@@ -255,6 +280,13 @@ func main() {
 				lastMeta = append([]byte(nil), f...)
 			}
 			metaSeen = true
+			return
+		}
+		if f[2] == typeName {
+			if string(f) != string(lastName) {
+				printFrame(f)
+				lastName = append([]byte(nil), f...)
+			}
 			return
 		}
 		seq := f[3]
