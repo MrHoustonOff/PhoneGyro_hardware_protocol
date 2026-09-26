@@ -41,7 +41,16 @@ static const uint8_t  NAME_FIELD_BYTES = 19; // bytes 4..22 of the frame
 static const char DEVICE_NAME[] = "Nano MPU-6050";
 
 static const uint16_t SAMPLE_RATE_HZ  = 200;
-static const uint16_t GYRO_RANGE_DPS  = 250;  // matches GYRO_CONFIG FS_SEL=0 below
+// +/-250 dps (FS_SEL=0) sounds appealing for resolution, but it clips on any
+// real gamepad flick or spin -- verified live: a real ~360 deg/s turn pinned
+// the reported rate at exactly 249.99 dps and the lost rotation made the
+// integrated orientation drift further with every fast movement, while slow
+// motion (which never approached the ceiling) stayed perfectly accurate.
+// +/-2000 dps (FS_SEL=3) matches what real DS4/DualSense controllers use for
+// exactly this reason; the coarser per-LSB resolution it trades away is not
+// perceptible in practice (the host's existing deadband already absorbs
+// low-level sensor noise).
+static const uint16_t GYRO_RANGE_DPS  = 2000; // matches GYRO_CONFIG FS_SEL=3 below
 static const uint16_t ACCEL_RANGE_G   = 2;    // matches ACCEL_CONFIG AFS_SEL=0 below
 static const uint32_t PROTOCOL_VERSION = (1UL << 16) | (0UL << 8) | 0UL; // 1.0.0
 
@@ -134,7 +143,7 @@ void mpuWrite(uint8_t reg, uint8_t value) {
 void setupMPU6050() {
   mpuWrite(REG_PWR_MGMT_1, 0x01);   // wake up, PLL clock referenced to X gyro
   mpuWrite(REG_CONFIG, 0x03);       // DLPF ~44Hz accel / 42Hz gyro, 1kHz internal sample rate
-  mpuWrite(REG_GYRO_CONFIG, 0x00);  // FS_SEL=0 -> +/-250 deg/s
+  mpuWrite(REG_GYRO_CONFIG, 0x18);  // FS_SEL=3 -> +/-2000 deg/s (see GYRO_RANGE_DPS comment)
   mpuWrite(REG_ACCEL_CONFIG, 0x00); // AFS_SEL=0 -> +/-2 g
   // Sample rate = 1kHz / (1 + SMPLRT_DIV) -> divider 4 gives exactly 200 Hz.
   mpuWrite(REG_SMPLRT_DIV, (1000 / SAMPLE_RATE_HZ) - 1);

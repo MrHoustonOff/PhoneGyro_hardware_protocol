@@ -10,10 +10,17 @@ for Arduino Nano (ATmega328) + GY-521 (MPU-6050), I2C address `0x68`.
 Single-file sketch, no external MPU-6050 library dependency (Wire only), so
 it can be read top to bottom as the protocol reference it's meant to be.
 
-- Wakes the MPU-6050, configures it for ±250 °/s / ±2 g / 200 Hz internal
-  sample rate (`SMPLRT_DIV` = 4 with the DLPF enabled).
+- Wakes the MPU-6050, configures it for ±2000 °/s / ±2 g / 200 Hz internal
+  sample rate (`SMPLRT_DIV` = 4 with the DLPF enabled). The gyro range is
+  deliberately wide, not the tightest/most sensitive option the chip offers:
+  ±250 °/s clips on an ordinary fast flick or spin, silently under-reporting
+  real rotation and drifting the integrated orientation further with every
+  fast movement (verified live). ±2000 °/s matches what real DS4/DualSense
+  controllers use for exactly this reason; the coarser resolution it trades
+  away is not perceptible in practice.
 - Sends one metadata frame (`TYPE=0x00`) at startup declaring that
-  configuration, then streams data frames (`TYPE=0x01`) at 200 Hz.
+  configuration, then an optional device name frame (`TYPE=0x02`), then
+  streams data frames (`TYPE=0x01`) at 200 Hz.
 - Every frame is CRC-8/SMBUS-checked and written in a single `Serial.write`
   call, per protocol Level 5.
 - `BUTTONS` is always `0` and the metadata capability mask advertises no
