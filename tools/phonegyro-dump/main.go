@@ -7,9 +7,16 @@
 // always show this stream as binary garbage -- that is expected, the
 // protocol is intentionally binary, not text. This tool exists so a device
 // author can verify their firmware without needing the full host app.
+//
+// Run with no arguments (e.g. by double-clicking the .exe) and it scans
+// every serial port itself, exactly like the real host's auto-discovery
+// (protocol Level 4) -- no need to know a COM port name up front. It also
+// always waits for Enter before the window closes, so double-clicking never
+// just flashes and vanishes.
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,7 +31,12 @@ const (
 	magic1    = 0x55
 	typeMeta  = 0x00
 	typeData  = 0x01
+	baudRate  = 115200
 )
+
+func serialMode() *serial.Mode {
+	return &serial.Mode{BaudRate: baudRate, DataBits: 8, Parity: serial.NoParity, StopBits: serial.OneStopBit}
+}
 
 func crc8(data []byte) byte {
 	var crc byte
@@ -126,29 +138,90 @@ func listPorts() {
 	}
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("usage: phonegyro-dump <port> [seconds]")
-		listPorts()
-		os.Exit(1)
+// autoDiscover is the same Level 4 auto-discovery the real host uses: try
+// every serial port until one produces a valid PhoneGyro frame. Returns the
+// still-open port plus whatever frames/leftover bytes were already read
+// during the probe, so nothing seen during discovery is lost on handoff.
+func autoDiscover() (name string, port serial.Port, initial [][]byte, pending []byte, err error) {
+	ports, lerr := serial.GetPortsList()
+	if lerr != nil || len(ports) == 0 {
+		return "", nil, nil, nil, fmt.Errorf("no serial ports detected on this machine")
 	}
-	name := os.Args[1]
+	for _, p := range ports {
+		port, err := serial.Open(p, serialMode())
+		if err != nil {
+			continue
+		}
+		_ = port.SetReadTimeout(150 * time.Millisecond)
+		var dec decoder
+		deadline := time.Now().Add(1500 * time.Millisecond)
+		buf := make([]byte, 128)
+		for time.Now().Before(deadline) {
+			n, rerr := port.Read(buf)
+			if rerr != nil {
+				break
+			}
+			if n == 0 {
+				continue
+			}
+			if frames, _ := dec.push(buf[:n]); len(frames) > 0 {
+				return p, port, frames, dec.buf, nil
+			}
+		}
+		port.Close()
+	}
+	return "", nil, nil, nil, fmt.Errorf("no PhoneGyro-compatible device found on any port")
+}
+
+// pauseBeforeExit keeps the console window open when launched by double-click
+// (no parent terminal to keep it visible), instead of it flashing and closing
+// the instant the program returns.
+func pauseBeforeExit() {
+	fmt.Println("\nPress Enter to close...")
+	bufio.NewReader(os.Stdin).ReadString('\n')
+}
+
+func main() {
+	defer pauseBeforeExit()
+
+	var name string
 	runFor := time.Duration(0) // 0 = run forever, until Ctrl+C
-	if len(os.Args) >= 3 {
-		if secs, err := strconv.Atoi(os.Args[2]); err == nil && secs > 0 {
+
+	args := os.Args[1:]
+	if len(args) > 0 {
+		name = args[0]
+	}
+	if len(args) > 1 {
+		if secs, err := strconv.Atoi(args[1]); err == nil && secs > 0 {
 			runFor = time.Duration(secs) * time.Second
 		}
 	}
 
-	mode := &serial.Mode{BaudRate: 115200, DataBits: 8, Parity: serial.NoParity, StopBits: serial.OneStopBit}
-	port, err := serial.Open(name, mode)
-	if err != nil {
-		fmt.Printf("failed to open %s: %v\n\n", name, err)
-		listPorts()
-		os.Exit(1)
+	var port serial.Port
+	var initialFrames [][]byte
+	var dec decoder
+
+	if name == "" {
+		fmt.Println("no port given -- scanning every serial port for a PhoneGyro device (protocol Level 4 auto-discovery)...")
+		var err error
+		name, port, initialFrames, dec.buf, err = autoDiscover()
+		if err != nil {
+			fmt.Println(err)
+			listPorts()
+			return
+		}
+		fmt.Printf("found a device on %s\n", name)
+	} else {
+		var err error
+		port, err = serial.Open(name, serialMode())
+		if err != nil {
+			fmt.Printf("failed to open %s: %v\n\n", name, err)
+			listPorts()
+			return
+		}
 	}
 	defer port.Close()
-	_ = port.SetReadTimeout(500 * time.Millisecond)
+	_ = port.SetReadTimeout(300 * time.Millisecond)
 
 	fmt.Printf("listening on %s at 115200 8N1", name)
 	if runFor > 0 {
@@ -157,7 +230,6 @@ func main() {
 		fmt.Println(" -- Ctrl+C to stop")
 	}
 
-	var dec decoder
 	var totalFrames, totalGarbage int
 	var dropped uint64
 	var haveSeq bool
@@ -168,8 +240,46 @@ func main() {
 	lastReport := start
 	lastPrint := time.Time{}
 	var lastMeta []byte
-	buf := make([]byte, 256)
 
+	handle := func(f []byte) {
+		totalFrames++
+		framesSinceReport++
+		if f[2] == typeMeta {
+			// A device only ever sends one metadata frame -- seeing the
+			// identical one repeat means it rebooted (e.g. the DTR reset
+			// when the port was opened). Print it once per distinct value,
+			// not once per repeat, so a reboot loop can't flood the console
+			// into starving the reader and causing its own packet loss.
+			if string(f) != string(lastMeta) {
+				printFrame(f)
+				lastMeta = append([]byte(nil), f...)
+			}
+			metaSeen = true
+			return
+		}
+		seq := f[3]
+		if haveSeq {
+			gap := int(seq) - int(lastSeq)
+			if gap < 0 {
+				gap += 256
+			}
+			if gap > 1 {
+				dropped += uint64(gap - 1)
+			}
+		}
+		lastSeq, haveSeq = seq, true
+
+		if time.Since(lastPrint) >= 200*time.Millisecond {
+			printFrame(f)
+			lastPrint = time.Now()
+		}
+	}
+
+	for _, f := range initialFrames {
+		handle(f)
+	}
+
+	buf := make([]byte, 256)
 	for {
 		if runFor > 0 && time.Since(start) >= runFor {
 			break
@@ -183,38 +293,7 @@ func main() {
 			frames, garbage := dec.push(buf[:n])
 			totalGarbage += garbage
 			for _, f := range frames {
-				totalFrames++
-				framesSinceReport++
-				if f[2] == typeMeta {
-					// A device only ever sends one metadata frame -- seeing
-					// the identical one repeat means it rebooted (e.g. the
-					// DTR reset when the port was opened). Print it once per
-					// distinct value, not once per repeat, so a reboot loop
-					// can't flood the console into starving the reader and
-					// causing its own artificial packet loss.
-					if string(f) != string(lastMeta) {
-						printFrame(f)
-						lastMeta = append([]byte(nil), f...)
-					}
-					metaSeen = true
-					continue
-				}
-				seq := f[3]
-				if haveSeq {
-					gap := int(seq) - int(lastSeq)
-					if gap < 0 {
-						gap += 256
-					}
-					if gap > 1 {
-						dropped += uint64(gap - 1)
-					}
-				}
-				lastSeq, haveSeq = seq, true
-
-				if time.Since(lastPrint) >= 200*time.Millisecond {
-					printFrame(f)
-					lastPrint = time.Now()
-				}
+				handle(f)
 			}
 		}
 		if time.Since(lastReport) >= 2*time.Second {
