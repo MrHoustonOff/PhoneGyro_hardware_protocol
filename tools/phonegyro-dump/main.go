@@ -259,6 +259,7 @@ func main() {
 	var haveSeq bool
 	var lastSeq byte
 	var metaSeen bool
+	var afterMeta bool // previous frame was metadata: data SEQ 0 now means a reboot
 	framesSinceReport := 0
 	start := time.Now()
 	lastReport := start
@@ -270,16 +271,17 @@ func main() {
 		totalFrames++
 		framesSinceReport++
 		if f[2] == typeMeta {
-			// A device only ever sends one metadata frame -- seeing the
-			// identical one repeat means it rebooted (e.g. the DTR reset
-			// when the port was opened). Print it once per distinct value,
-			// not once per repeat, so a reboot loop can't flood the console
-			// into starving the reader and causing its own packet loss.
+			// Protocol v1.1 devices repeat metadata every second (and a
+			// reboot sends it again). Print it once per distinct value,
+			// not once per repeat, so repeats or a reboot loop can't flood
+			// the console into starving the reader and causing its own
+			// packet loss.
 			if string(f) != string(lastMeta) {
 				printFrame(f)
 				lastMeta = append([]byte(nil), f...)
 			}
 			metaSeen = true
+			afterMeta = true
 			return
 		}
 		if f[2] == typeName {
@@ -290,7 +292,9 @@ func main() {
 			return
 		}
 		seq := f[3]
-		if haveSeq {
+		rebooted := afterMeta && seq == 0 // SEQ restart after a boot is not loss
+		afterMeta = false
+		if haveSeq && !rebooted {
 			gap := int(seq) - int(lastSeq)
 			if gap < 0 {
 				gap += 256

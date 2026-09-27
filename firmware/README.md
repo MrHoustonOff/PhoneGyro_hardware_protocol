@@ -18,9 +18,11 @@ it can be read top to bottom as the protocol reference it's meant to be.
   fast movement (verified live). ±2000 °/s matches what real DS4/DualSense
   controllers use for exactly this reason; the coarser resolution it trades
   away is not perceptible in practice.
-- Sends one metadata frame (`TYPE=0x00`) at startup declaring that
+- Sends a metadata frame (`TYPE=0x00`) at startup declaring that
   configuration, then an optional device name frame (`TYPE=0x02`), then
-  streams data frames (`TYPE=0x01`) at 200 Hz.
+  streams data frames (`TYPE=0x01`) at 200 Hz, repeating the metadata and
+  name frames every second (protocol v1.1) so a host that opens the port
+  without rebooting the board still learns the range.
 - Every frame is CRC-8/SMBUS-checked and written in a single `Serial.write`
   call, per protocol Level 5.
 - `BUTTONS` is always `0` and the metadata capability mask advertises no

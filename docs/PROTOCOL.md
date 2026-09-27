@@ -1,4 +1,4 @@
-# PhoneGyro Hardware Protocol — Specification v1.0 (draft)
+# PhoneGyro Hardware Protocol — Specification v1.1 (draft)
 
 *[Читать по-русски](PROTOCOL.ru.md)*
 
@@ -94,8 +94,9 @@ physical units (rad/s, g): different sensors have different ADC resolution
 and different sensitivity scale (`LSB/°/s`, `LSB/g`), and converting to
 physical units is the host's job, not the device's.
 
-To declare its scale, the device **must** send exactly one **metadata frame**
-before starting the `TYPE=0x01` data stream. This uses the *same* 24-byte
+To declare its scale, the device **must** send a **metadata frame** before
+starting the `TYPE=0x01` data stream, and **must** repeat it at least once per
+second for as long as it streams (v1.1). This uses the *same* 24-byte
 layout as a regular frame — the host never needs a second parser, and frame
 resynchronization logic stays identical for both frame kinds:
 
@@ -119,6 +120,24 @@ the stream, it **must** fall back to safe defaults matching the most common
 cheap 6-axis sensor on the market (±250 °/s gyro range, ±2 g accel range,
 200 Hz) and must not treat this as an error.
 
+**Why the repeat (v1.1).** A host cannot know that it saw the start of the
+stream. Some boards reboot when the port opens (Arduino auto-reset via DTR),
+but not reliably — a driver may keep DTR asserted from the previous session —
+and boards with native USB (ESP32-S3, RP2040, ATmega32U4, ...) never do: the
+host joins a stream that is already running. With a single metadata frame
+at boot such a host would keep the defaults forever; on a ±2000 °/s sensor
+that makes every rotation 8× too slow. So:
+
+- The device repeats the metadata frame at least once per second (1 s is
+  recommended), between data frames. It keeps `SEQ = 0` and does **not**
+  consume a data-frame sequence number: the data `SEQ` continues unbroken.
+- The host applies a metadata frame whenever it arrives, not only at the
+  start, and switches from the defaults to the declared values at that moment.
+- The host must not rely on the device rebooting when the port opens, and
+  must not try to force a reboot (DTR/RTS tricks are board-specific).
+- A data frame with `SEQ = 0` right after a metadata frame marks a device
+  restart: the jump in `SEQ` is not lost frames.
+
 ### Optional: device name frame (`TYPE=0x02`)
 
 A device **may** additionally identify itself by name — e.g. "Nano MPU-6050",
@@ -140,9 +159,9 @@ BYTES 4..22 (19 bytes) = device name, ASCII, zero-padded
 CRC8     = as always, over bytes 0-22
 ```
 
-If sent, it should be sent once, right after the metadata frame and before
-the `TYPE=0x01` data stream — the same "send it once at startup" rule as
-metadata. A host that never receives one must not treat that as an error;
+If sent, it should follow the metadata frame — both at startup and on every
+repeat, so a host that joins a running stream learns the name too. It keeps
+`SEQ = 0` and does not consume a data-frame sequence number either. A host that never receives one must not treat that as an error;
 it should just display something generic (e.g. "USB controller").
 
 ---
@@ -175,7 +194,9 @@ point of a hardware-agnostic contract.
 
 - Start sending frames immediately after the port opens, without waiting for
   a command.
-- Send exactly one metadata frame (Level 3) before the first data frame.
+- Send a metadata frame (Level 3) before the first data frame and repeat it
+  at least once per second while streaming (together with the optional name
+  frame, if the device sends one).
 - Maintain a stable frame rate. Minimum acceptable: 100 Hz. Recommended: 200 Hz.
 - Guarantee that every frame is sent whole (not split by the host OS —
   normally satisfied by one write call for the entire 24-byte buffer).
@@ -195,7 +216,10 @@ point of a hardware-agnostic contract.
 - Treat BUTTONS bit 0 as a universal re-centering trigger, identical to the
   software calibration path used for other sources (phones).
 - If no metadata frame (Level 3) arrives within ~500 ms, apply the safe
-  defaults described in Level 3 rather than failing.
+  defaults described in Level 3 rather than failing; apply a metadata frame
+  whenever it arrives later.
+- Never rely on the device rebooting when the port opens, and never try to
+  force it (the stream may already be running).
 
 ---
 
@@ -219,7 +243,7 @@ The only requirement is conformance to Levels 1–5 of this document.
 
 ---
 
-## 7. Deliberately out of scope for v1.0
+## 7. Deliberately out of scope for v1.1
 
 **Temperature compensation is not part of this protocol.** The `TEMP` field
 exists so a device *may* apply its own compensation internally (still

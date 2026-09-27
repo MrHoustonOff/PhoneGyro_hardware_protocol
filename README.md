@@ -26,7 +26,7 @@ repository extends that principle to physical hardware.
 
 ## Status
 
-Draft v1.0. Being developed alongside the host application. The wire format
+Draft v1.1. Being developed alongside the host application. The wire format
 and semantics are considered stable enough to build against, but not yet
 frozen — check this repository's tags/releases once the first reference
 firmware has been validated on real hardware.

@@ -2,9 +2,9 @@
 // Board:  Arduino Nano (ATmega328)
 // Sensor: GY-521 breakout (MPU-6050), I2C address 0x68 (AD0 -> GND)
 //
-// Implements protocol v1.0 (see ../../docs/PROTOCOL.md):
-//   - one metadata frame (TYPE=0x00) sent once at startup
-//   - one optional device name frame (TYPE=0x02) sent once at startup
+// Implements protocol v1.1 (see ../../docs/PROTOCOL.md):
+//   - a metadata frame (TYPE=0x00) at startup, repeated every second
+//   - an optional device name frame (TYPE=0x02) right after each metadata frame
 //   - a continuous stream of data frames (TYPE=0x01) at 200 Hz
 //   - 24-byte fixed frame, little-endian, CRC-8/SMBUS trailer
 //   - raw register values only -- no on-device sensor fusion
@@ -52,7 +52,7 @@ static const uint16_t SAMPLE_RATE_HZ  = 200;
 // low-level sensor noise).
 static const uint16_t GYRO_RANGE_DPS  = 2000; // matches GYRO_CONFIG FS_SEL=3 below
 static const uint16_t ACCEL_RANGE_G   = 2;    // matches ACCEL_CONFIG AFS_SEL=0 below
-static const uint32_t PROTOCOL_VERSION = (1UL << 16) | (0UL << 8) | 0UL; // 1.0.0
+static const uint32_t PROTOCOL_VERSION = (1UL << 16) | (1UL << 8) | 0UL; // 1.1.0
 
 // This reference build has no physical reset button (see DEVICE_SPEC.md
 // in the host repository) -- BUTTONS stays 0 in every frame, and bit 0
@@ -178,6 +178,13 @@ void readMPU6050(PhoneGyroFrame &f) {
 unsigned long nextFrameAt = 0;
 const unsigned long FRAME_INTERVAL_US = 1000000UL / SAMPLE_RATE_HZ;
 
+// Protocol v1.1: the host may join a stream that is already running (the port
+// opened without rebooting the board), so the metadata and name frames are
+// repeated every second. They go out in separate frame slots: each slot then
+// carries at most 48 bytes (~4.2 ms at 115200 baud), inside the 5 ms period.
+const uint16_t META_REPEAT_FRAMES = SAMPLE_RATE_HZ; // once per second
+uint16_t framesSinceMeta = 0;
+
 void setup() {
   Serial.begin(115200);
   Wire.begin();
@@ -209,4 +216,13 @@ void loop() {
 
   readMPU6050(f);
   sendFrame(f);
+
+  // Neither repeat consumes a data SEQ number.
+  framesSinceMeta++;
+  if (framesSinceMeta == META_REPEAT_FRAMES) {
+    sendMetadataFrame();
+  } else if (framesSinceMeta > META_REPEAT_FRAMES) {
+    sendDeviceNameFrame();
+    framesSinceMeta = 0;
+  }
 }

@@ -65,8 +65,8 @@ listening on COM3 at 115200 8N1 -- Ctrl+C to stop
   - `garbage(total)` — bytes discarded while resyncing, accumulated since
     start.
 
-A handful of garbage bytes and a repeated `[META]` right when the port opens
-is normal — opening the port resets the Arduino (DTR), so the board reboots
-and briefly resends its one metadata frame; the decoder resyncs within a
-couple of bytes. Garbage or `loss` warnings that continue throughout the
+A handful of garbage bytes right when the port opens is normal — opening the
+port often resets the Arduino (DTR), so the board reboots mid-frame; the
+decoder resyncs within a couple of bytes. Protocol v1.1 devices also repeat
+their metadata every second; `[META]` is still printed only when it changes. Garbage or `loss` warnings that continue throughout the
 capture mean something is actually wrong (wiring, baud rate, power).
