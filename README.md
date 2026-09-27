@@ -13,10 +13,9 @@ that speaks the browser's standard `devicemotion` API just works, regardless
 of whether it's an iPhone, an Android flagship, or a budget tablet. This
 repository extends that principle to physical hardware.
 
-> Note: the project (host app + this protocol) is transitioning its brand
-> from "GyroBridge" to "PhoneGyro". You may still see the old name in a few
-> places until that rename is finished — treat "PhoneGyro" as the current,
-> authoritative name.
+> Note: the project (host app + this protocol) was renamed from "GyroBridge"
+> to "PhoneGyro" in host app v2.0.0. The rename is complete; GyroBridge v1.x
+> host releases are deprecated. The protocol itself did not change.
 
 ## Contents
 
