@@ -4,7 +4,7 @@
 
 An open data contract for motion-sensor controllers. Any microcontroller and
 any gyroscope/accelerometer combination is compatible with the
-[PhoneGyro](https://github.com/MrHoustonOff/iphone-gyro-controller) host
+[PhoneGyro](https://github.com/MrHoustonOff/PhoneGyro) host
 application — no vendor-specific driver code needed — as long as the device
 implements the levels described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 

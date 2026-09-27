@@ -4,7 +4,7 @@
 
 Открытый контракт данных для контроллеров движения. Любой микроконтроллер и
 любая комбинация гироскоп/акселерометр совместимы с хост-приложением
-[PhoneGyro](https://github.com/MrHoustonOff/iphone-gyro-controller) — без
+[PhoneGyro](https://github.com/MrHoustonOff/PhoneGyro) — без
 кода под конкретного производителя — если устройство реализует уровни,
 описанные в [`docs/PROTOCOL.ru.md`](docs/PROTOCOL.ru.md).
 
